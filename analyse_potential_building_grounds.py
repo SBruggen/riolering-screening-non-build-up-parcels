@@ -2,6 +2,7 @@ import os
 import json
 import psycopg2
 from psycopg2 import sql
+from datetime import datetime
 
 # Load database connection parameters from config file
 loc_config = os.path.join('..', '..', 'data', 'config.json')
@@ -77,6 +78,51 @@ def get_all_project_ids():
 
     except Exception as e:
         print(f"Error: {e}")
+    finally:
+        if conn:
+            cur.close()
+            conn.close()
+
+def format_user_name(first_name, last_name):
+    """Format the user name according to the specific pattern."""
+    return f"STADAARSCHOT_{first_name.lower()}.{last_name.lower()}"
+
+def pass_user_id(user_name):
+    """Pass user id from user name."""
+    try:
+        # Connect to the PostgreSQL database
+        conn = psycopg2.connect(
+            dbname=db_name,
+            user=db_user,
+            password=db_password,
+            host=db_host,
+            port=db_port
+        )
+        cur = conn.cursor()
+
+        # SQL query to fetch user id
+        query = """
+        SELECT id
+        FROM identity_server.asp_net_users
+        WHERE user_name = %s;
+        """    
+        cur.execute(query, (user_name,))
+        
+        # Fetch the result
+        result = cur.fetchone()
+        
+        if result:
+            user_id = result[0]
+            print("User id successfully returned")
+            return user_id
+        else:
+            print("User not found")
+            return None
+
+    except Exception as e:
+        print(f"Error: {e}")
+        if conn:
+            conn.rollback()
     finally:
         if conn:
             cur.close()
@@ -176,7 +222,7 @@ def create_combined_subset_tables(project_id):
             cur.close()
             conn.close()
 
-def store_potential_building_grounds():
+def store_potential_building_grounds(user_id):
     """Store potential building grounds for all project zones."""
     try:
         # Connect to the PostgreSQL database
@@ -188,6 +234,9 @@ def store_potential_building_grounds():
             port=db_port
         )
         cur = conn.cursor()
+
+        # Current timestamp
+        created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
 
         # SQL query to insert potential building grounds
         query = """
@@ -204,11 +253,13 @@ def store_potential_building_grounds():
                 AND ST_IsValid(p.geometry) 
                 AND NOT ST_IsEmpty(p.geometry)
         )
-        INSERT INTO editeren.riolering_screening_potentiele_bouwgronden_24001 (capakey, voorschriften, geometry)
+        INSERT INTO editeren.riolering_screening_potentiele_bouwgronden_24001 (capakey, voorschriften, geometry, created_by, created_at)
         SELECT 
             w.capakey, 
             w.voorschriften, 
-            ST_SetSRID(w.geometry, 31370) AS geometry
+            ST_SetSRID(w.geometry, 0) AS geometry,
+            %s,
+            %s
         FROM 
             valid_geometries AS w
         LEFT JOIN  
@@ -220,7 +271,7 @@ def store_potential_building_grounds():
         """
 
         # Execute the query
-        cur.execute(query)
+        cur.execute(query, (user_id, created_at))
         conn.commit()
         print("Potential building grounds stored successfully.")
 
@@ -233,7 +284,7 @@ def store_potential_building_grounds():
             cur.close()
             conn.close()
 
-def store_gewestplan_woonzones():
+def store_gewestplan_woonzones(user_id):
     """Store selected gewestplan woonzones for a given project zone."""
     try:
         # Connect to the PostgreSQL database
@@ -246,14 +297,19 @@ def store_gewestplan_woonzones():
         )
         cur = conn.cursor()
 
+        # Current timestamp
+        created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+
         # SQL query to insert gewestplan woonzones
         query = """
-        INSERT INTO editeren.riolering_screening_woonzones_gwp_24001 (naam, hoofdcode, voorschriften, geometry)
+        INSERT INTO editeren.riolering_screening_woonzones_gwp_24001 (naam, hoofdcode, voorschriften, geometry, created_by, created_at)
         SELECT 
             pz.naam,
             g.hoofdcode,
             g.voorschriften,
-            g.geometry
+            ST_SetSRID(ST_Multi(g.geometry), 0) as geometry,
+            %s,
+            %s
         FROM 
             projects.gewestplan_combined AS g
         JOIN editeren.riolering_screening_projectzone_24001 AS pz
@@ -261,7 +317,7 @@ def store_gewestplan_woonzones():
         WHERE 
             g.hoofdcode IN ('0100', '0101', '0102', '0103', '0104', '0105', '0110');
         """
-        cur.execute(query)
+        cur.execute(query, (user_id, created_at))
         conn.commit()
         print("Gewestplan woonzones stored successfully.")
 
@@ -277,14 +333,19 @@ def store_gewestplan_woonzones():
 # Main execution
 if __name__ == "__main__":
     mode = input("Enter mode (input/analyze): ").strip().lower()
+    first_name = input("Enter the first name: ").strip().lower()
+    last_name = input("Enter the last name: ").strip().lower()
+    user_name = format_user_name(first_name, last_name)
+    user_id = pass_user_id(user_name)
 
-    if mode == "input":
-        project_name = input("Enter the project name: ").strip()
-        project_id = get_project_id(project_name)
-        if project_id:
-            create_combined_subset_tables(project_id)
-    elif mode == "analyze":
-        store_potential_building_grounds()
+    if user_id is None:
+        print("User ID could not be retrieved. Exiting.")
     else:
-        print("Invalid mode. Please enter 'input' or 'analyze'.")
-
+        if mode == "input":
+            print(f"User ID for '{user_name}' is {user_id}.")
+            # Add your input mode code here, if any
+        elif mode == "analyze":
+            store_potential_building_grounds(user_id)
+            store_gewestplan_woonzones(user_id)
+        else:
+            print("Invalid mode entered. Please enter either 'input' or 'analyze'.")
