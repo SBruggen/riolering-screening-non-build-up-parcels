@@ -83,7 +83,7 @@ def get_all_project_ids():
             conn.close()
 
 def create_combined_subset_tables(project_id):
-    """Create combined subset tables for all project zones."""
+    """Create combined subset tables for all project zones and restrict geometries to within the project zones."""
     try:
         # Connect to the PostgreSQL database
         conn = psycopg2.connect(
@@ -102,7 +102,6 @@ def create_combined_subset_tables(project_id):
                     id SERIAL PRIMARY KEY,
                     project_id INTEGER,
                     geometry geometry,
-                    -- Add other columns from wfs.grb_gbg as needed
                     CONSTRAINT fk_project FOREIGN KEY(project_id) 
                         REFERENCES editeren.riolering_screening_projectzone_24001(id)
                 );
@@ -122,8 +121,8 @@ def create_combined_subset_tables(project_id):
                 CREATE TABLE IF NOT EXISTS projects.percelen_combined (
                     id SERIAL PRIMARY KEY,
                     project_id INTEGER,
+                    capakey TEXT,
                     geometry geometry,
-                    -- Add other columns from public.percelen as needed
                     CONSTRAINT fk_project FOREIGN KEY(project_id) 
                         REFERENCES editeren.riolering_screening_projectzone_24001(id)
                 );
@@ -137,27 +136,27 @@ def create_combined_subset_tables(project_id):
         insert_queries = [
             sql.SQL("""
                 INSERT INTO projects.gbg_combined (project_id, geometry)
-                SELECT %s, b.shape as geometry
+                SELECT %s, ST_Intersection(ST_SetSRID(b.shape, 31370), ST_SetSRID(r.geometry, 31370)) AS geometry
                 FROM wfs.grb_gbg AS b
                 JOIN editeren.riolering_screening_projectzone_24001 AS r
                 ON ST_Intersects(ST_SetSRID(b.shape, 31370), ST_SetSRID(r.geometry, 31370))
-                WHERE r.id = %s;
+                WHERE r.id = %s AND ST_IsValid(ST_Intersection(ST_SetSRID(b.shape, 31370), ST_SetSRID(r.geometry, 31370)));
             """),
             sql.SQL("""
                 INSERT INTO projects.gewestplan_combined (project_id, hoofdcode, voorschriften, geometry)
-                SELECT %s, g.hoofdcode, g.voorschriften, g.geometry
+                SELECT %s, g.hoofdcode, g.voorschriften, ST_Intersection(ST_SetSRID(g.geometry, 31370), ST_SetSRID(r.geometry, 31370)) AS geometry
                 FROM bestemmingen.vw_gewestplan AS g
                 JOIN editeren.riolering_screening_projectzone_24001 AS r
                 ON ST_Intersects(ST_SetSRID(g.geometry, 31370), ST_SetSRID(r.geometry, 31370))
-                WHERE r.id = %s;
-            """),
+                WHERE r.id = %s AND ST_IsValid(ST_Intersection(ST_SetSRID(g.geometry, 31370), ST_SetSRID(r.geometry, 31370)));
+                """),
             sql.SQL("""
                 INSERT INTO projects.percelen_combined (project_id, capakey, geometry)
-                SELECT %s, p.capakey, p.geometry
+                SELECT %s, p.capakey, ST_Intersection(ST_SetSRID(p.geometry, 31370), ST_SetSRID(r.geometry, 31370)) AS geometry
                 FROM public.percelen AS p
                 JOIN editeren.riolering_screening_projectzone_24001 AS r
                 ON ST_Intersects(ST_SetSRID(p.geometry, 31370), ST_SetSRID(r.geometry, 31370))
-                WHERE r.id = %s;
+                WHERE r.id = %s AND ST_IsValid(ST_Intersection(ST_SetSRID(p.geometry, 31370), ST_SetSRID(r.geometry, 31370)));
             """)
         ]
 
@@ -177,7 +176,7 @@ def create_combined_subset_tables(project_id):
             cur.close()
             conn.close()
 
-def store_potential_building_grounds(project_id):
+def store_potential_building_grounds():
     """Store potential building grounds for all project zones."""
     try:
         # Connect to the PostgreSQL database
@@ -278,21 +277,14 @@ def store_gewestplan_woonzones():
 # Main execution
 if __name__ == "__main__":
     mode = input("Enter mode (input/analyze): ").strip().lower()
-    
+
     if mode == "input":
-        project_name = input("Enter the project name: ")
+        project_name = input("Enter the project name: ").strip()
         project_id = get_project_id(project_name)
         if project_id:
             create_combined_subset_tables(project_id)
-        else:
-            print("Project not found.")
     elif mode == "analyze":
-        project_ids = get_all_project_ids()
-        if project_ids:
-            for project_id in project_ids:
-                store_potential_building_grounds(project_id)
-            store_gewestplan_woonzones()
-        else:
-            print("No projects found.")
+        store_potential_building_grounds()
     else:
         print("Invalid mode. Please enter 'input' or 'analyze'.")
+
