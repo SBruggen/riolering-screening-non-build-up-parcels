@@ -267,13 +267,14 @@ def store_potential_building_grounds(user_id):
         ON ST_Intersects(ST_SetSRID(w.geometry, 31370), ST_SetSRID(b.geometry, 31370)) 
         WHERE b.id IS NULL  
             AND ST_Area(ST_SetSRID(w.geometry, 31370)) > 300
-        GROUP BY w.capakey, w.geometry, w.voorschriften;
+        GROUP BY w.capakey, w.geometry, w.voorschriften
+        ON CONFLICT (capakey, voorschriften, geometry) DO NOTHING;
         """
 
         # Execute the query
         cur.execute(query, (user_id, created_at))
         conn.commit()
-        print("Potential building grounds stored successfully.")
+        print(f"Potential building grounds for user ID '{user_id}' stored successfully.")
 
     except Exception as e:
         print(f"Error: {e}")
@@ -315,7 +316,8 @@ def store_gewestplan_woonzones(user_id):
         JOIN editeren.riolering_screening_projectzone_24001 AS pz
         ON g.project_id = pz.id
         WHERE 
-            g.hoofdcode IN ('0100', '0101', '0102', '0103', '0104', '0105', '0110');
+            g.hoofdcode IN ('0100', '0101', '0102', '0103', '0104', '0105', '0110')
+        ON CONFLICT (naam, hoofdcode, geometry) DO NOTHING;
         """
         cur.execute(query, (user_id, created_at))
         conn.commit()
